@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Retro Space Invaders MVP</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Press Start 2P', monospace;
+            background-color: #050508;
+            color: #00ff66;
+            touch-action: manipulation;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .neon-text-green {
+            text-shadow: 0 0 8px rgba(0, 255, 102, 0.8), 0 0 15px rgba(0, 255, 102, 0.4);
+        }
+
+        .neon-text-pink {
+            text-shadow: 0 0 8px rgba(255, 0, 128, 0.8), 0 0 15px rgba(255, 0, 128, 0.4);
+        }
+
+        .arcade-border {
+            border: 4px solid #00ff66;
+            box-shadow: 0 0 12px #00ff66, inset 0 0 12px #00ff66;
+        }
+
+        canvas {
+            image-rendering: pixelated;
+            background-color: #000000;
+        }
+
+        .touch-btn {
+            background: rgba(0, 255, 102, 0.15);
+            border: 2px solid #00ff66;
+            color: #00ff66;
+            transition: all 0.1s ease;
+        }
+
+        .touch-btn:active {
+            background: rgba(0, 255, 102, 0.5);
+            transform: scale(0.95);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-between p-2 md:p-4 text-xs select-none">
+    <!-- Header / Scoreboard -->
+    <header class="w-full max-w-2xl flex justify-between items-center py-2 px-4 mb-2 bg-gray-950 rounded-lg border border-green-500/30">
+        <div>
+            <div class="text-gray-400 text-[10px] mb-1">SCORE</div>
+            <div id="score" class="text-base text-green-400 neon-text-green">00000</div>
+        </div>
+        <div>
+            <div class="text-gray-400 text-[10px] mb-1">STAGE</div>
+            <div id="stage" class="text-base text-cyan-400">STAGE 1</div>
+        </div>
+        <div>
+            <div class="text-gray-400 text-[10px] mb-1">HIGH SCORE</div>
+            <div id="highScore" class="text-base text-yellow-400">00000</div>
+        </div>
+        <div>
+            <div class="text-gray-400 text-[10px] mb-1">LIVES</div>
+            <div id="lives" class="text-base text-red-500 flex gap-1">❤️❤️❤️</div>
+        </div>
+    </header>
+
+    <!-- Game Container -->
+    <div class="relative w-full max-w-2xl aspect-[4/3] flex items-center justify-center arcade-border rounded-lg overflow-hidden bg-black">
+        <canvas id="gameCanvas" width="800" height="600" class="w-full h-full block"></canvas>
+
+        <!-- Overlay Screen (Start / Game Over / Victory) -->
+        <div id="overlay" class="absolute inset-0 bg-black/85 flex flex-col items-center justify-center gap-6 p-6 text-center z-10">
+            <h1 id="overlayTitle" class="text-2xl md:text-4xl text-green-400 neon-text-green leading-relaxed">SPACE<br>INVADERS</h1>
+            <p id="overlaySub" class="text-xs text-gray-300 leading-normal max-w-md">DEFEND THE EARTH FROM ALIEN WAVES!</p>
+            <button id="startBtn" class="px-6 py-3 bg-green-500 text-black font-bold rounded hover:bg-green-400 transition-all shadow-[0_0_15px_#00ff66] text-sm tracking-wider">
+                START GAME
+            </button>
+            <div class="text-[10px] text-gray-500 mt-2 hidden md:block">
+                [← / A] Move Left &nbsp;|&nbsp; [→ / D] Move Right &nbsp;|&nbsp; [SPACE] Shoot
+            </div>
+        </div>
+    </div>
+
+    <!-- Touch Controls for Mobile Devices -->
+    <div class="w-full max-w-2xl grid grid-cols-3 gap-3 mt-3 md:hidden">
+        <button id="btnLeft" class="touch-btn py-4 rounded-lg text-center text-lg font-bold flex items-center justify-center">
+            ◀ LEFT
+        </button>
+        <button id="btnShoot" class="touch-btn py-4 bg-red-950/40 border-red-500 text-red-400 rounded-lg text-center text-lg font-bold flex items-center justify-center">
+            🔥 FIRE
+        </button>
+        <button id="btnRight" class="touch-btn py-4 rounded-lg text-center text-lg font-bold flex items-center justify-center">
+            RIGHT ▶
+        </button>
+    </div>
+
+    <script>
+        // Web Audio Synthesizer for Retro Sound Effects
+        class SoundFX {
+            constructor() {
+                this.ctx = null;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+            }
+
+            playShoot() {
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(600, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.1);
+                gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.1);
+            }
+
+            playBossShoot() {
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(300, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(60, this.ctx.currentTime + 0.25);
+                gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.25);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.25);
+            }
+
+            playBossHit() {
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(120, this.ctx.currentTime);
+                osc.frequency.linearRampToValueAtTime(40, this.ctx.currentTime + 0.08);
+                gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.08);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.08);
+            }
+
+            playExplosion() {
+                if (!this.ctx) return;
+                const bufferSize = this.ctx.sampleRate * 0.2;
+                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
+                }
+                const noise = this.ctx.createBufferSource();
+                noise.buffer = buffer;
+                const gain = this.ctx.createGain();
+                gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
+                noise.connect(gain);
+                gain.connect(this.ctx.destination);
+                noise.start();
+            }
+
+            playInvaderStep(freq = 150) {
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+                gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.08);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.08);
+            }
+        }
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const sfx = new SoundFX();
+
+        const GAME_WIDTH = 800;
+        const GAME_HEIGHT = 600;
+
+        // UI Elements
+        const scoreEl = document.getElementById('score');
+        const stageEl = document.getElementById('stage');
+        const highScoreEl = document.getElementById('highScore');
+        const livesEl = document.getElementById('lives');
+        const overlay = document.getElementById('overlay');
+        const overlayTitle = document.getElementById('overlayTitle');
+        const overlaySub = document.getElementById('overlaySub');
+        const startBtn = document.getElementById('startBtn');
+
+        // Game States
+        const STATE = { MENU: 0, PLAYING: 1, GAMEOVER: 2, VICTORY: 3 };
+        let currentState = STATE.MENU;
+
+        let score = 0;
+        let currentStage = 1;
+        let highScore = localStorage.getItem('invader_highscore') || 0;
+        let lives = 3;
+        let animationFrameId = null;
+
+        let bannerText = "";
+        let bannerTimer = 0;
+
+        highScoreEl.textContent = String(highScore).padStart(5, '0');
+
+        // Player Cannon
+        class Player {
+            constructor() {
+                this.width = 44;
+                this.height = 24;
+                this.x = (GAME_WIDTH - this.width) / 2;
+                this.y = GAME_HEIGHT - 50;
+                this.speed = 6;
+                this.color = '#00ff66';
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                // Base
+                ctx.fillRect(this.x, this.y + 10, this.width, 14);
+                // Turret body
+                ctx.fillRect(this.x + 6, this.y + 4, this.width - 12, 6);
+                // Cannon tip
+                ctx.fillRect(this.x + (this.width / 2) - 3, this.y, 6, 4);
+            }
+
+            move(dir) {
+                this.x += dir * this.speed;
+                // Boundary check
+                if (this.x < 10) this.x = 10;
+                if (this.x + this.width > GAME_WIDTH - 10) this.x = GAME_WIDTH - 10 - this.width;
+            }
+        }
+
+        // Invader Enemy
+        class Invader {
+            constructor(x, y, row) {
+                this.x = x;
+                this.y = y;
+                this.width = 36;
+                this.height = 26;
+                this.row = row; // 0: top (high pts), 1-2: mid, 3-4: bottom
+                this.alive = true;
+                this.animFrame = 0;
+
+                if (row === 0) {
+                    this.points = 30;
+                    this.color = '#ff007f'; // Pink
+                } else if (row === 1 || row === 2) {
+                    this.points = 20;
+                    this.color = '#00f0ff'; // Cyan
+                } else {
+                    this.points = 10;
+                    this.color = '#ffdd00'; // Yellow
+                }
+            }
+
+            draw() {
+                if (!this.alive) return;
+                ctx.fillStyle = this.color;
+
+                // Simple Pixel Art Rendering for Invaders based on row
+                const w = this.width;
+                const h = this.height;
+                const x = this.x;
+                const y = this.y;
+
+                if (this.row === 0) {
+                    // Top Invader (Squid-like)
+                    ctx.fillRect(x + 12, y, 12, 4);
+                    ctx.fillRect(x + 8, y + 4, 20, 4);
+                    ctx.fillRect(x + 4, y + 8, 28, 6);
+                    ctx.fillRect(x + 8, y + 14, 8, 4);
+                    ctx.fillRect(x + 20, y + 14, 8, 4);
+                    if (this.animFrame === 0) {
+                        ctx.fillRect(x + 2, y + 18, 6, 6);
+                        ctx.fillRect(x + 28, y + 18, 6, 6);
+                    } else {
+                        ctx.fillRect(x + 10, y + 18, 6, 6);
+                        ctx.fillRect(x + 20, y + 18, 6, 6);
+                    }
+                } else if (this.row <= 2) {
+                    // Crab-like
+                    ctx.fillRect(x + 8, y, 20, 4);
+                    ctx.fillRect(x + 4, y + 4, 28, 4);
+                    ctx.fillRect(x + 4, y + 8, 28, 8);
+                    ctx.fillRect(x + 10, y + 16, 16, 4);
+                    if (this.animFrame === 0) {
+                        ctx.fillRect(x, y + 8, 4, 10);
+                        ctx.fillRect(x + 32, y + 8, 4, 10);
+                    } else {
+                        ctx.fillRect(x, y + 2, 4, 8);
+                        ctx.fillRect(x + 32, y + 2, 4, 8);
+                    }
+                } else {
+                    // Octopus-like
+                    ctx.fillRect(x + 10, y, 16, 4);
+                    ctx.fillRect(x + 6, y + 4, 24, 4);
+                    ctx.fillRect(x + 4, y + 8, 28, 8);
+                    ctx.fillRect(x + 8, y + 16, 20, 4);
+                    if (this.animFrame === 0) {
+                        ctx.fillRect(x + 4, y + 20, 6, 4);
+                        ctx.fillRect(x + 26, y + 20, 6, 4);
+                    } else {
+                        ctx.fillRect(x + 10, y + 20, 6, 4);
+                        ctx.fillRect(x + 20, y + 20, 6, 4);
+                    }
+                }
+            }
+        }
+
+        // Boss Alien Class
+        class Boss {
+            constructor() {
+                this.width = 160;
+                this.height = 90;
+                this.x = (GAME_WIDTH - this.width) / 2;
+                this.y = 60;
+                this.maxHp = 100;
+                this.hp = this.maxHp;
+                this.speed = 3;
+                this.direction = 1;
+                this.shootTimer = 0;
+                this.alive = true;
+                this.hitFlash = 0;
+                this.phase = 1;
+            }
+
+            update() {
+                if (!this.alive) return;
+
+                if (this.hitFlash > 0) this.hitFlash--;
+
+                // Movement
+                this.x += this.speed * this.direction;
+                if (this.x < 40 || this.x + this.width > GAME_WIDTH - 40) {
+                    this.direction *= -1;
+                }
+
+                // Phase transition at 50% HP
+                if (this.hp < this.maxHp * 0.5 && this.phase === 1) {
+                    this.phase = 2;
+                    this.speed = 5;
+                }
+
+                this.shootTimer++;
+
+                // Phase 1 Attack: 3-way spread shot
+                if (this.phase === 1) {
+                    if (this.shootTimer % 45 === 0) {
+                        invaderBullets.push(new Bullet(this.x + this.width / 2, this.y + this.height, 5, false));
+                        invaderBullets.push(new Bullet(this.x + 20, this.y + this.height, 4, false));
+                        invaderBullets.push(new Bullet(this.x + this.width - 20, this.y + this.height, 4, false));
+                        sfx.playBossShoot();
+                    }
+                } else {
+                    // Phase 2 Attack: Rapid 4-way shot & Minion summoning
+                    if (this.shootTimer % 30 === 0) {
+                        invaderBullets.push(new Bullet(this.x + this.width / 2, this.y + this.height, 6, false));
+                        invaderBullets.push(new Bullet(this.x + 10, this.y + this.height, 5, false));
+                        invaderBullets.push(new Bullet(this.x + this.width - 10, this.y + this.height, 5, false));
+                        sfx.playBossShoot();
+                    }
+
+                    if (this.shootTimer % 180 === 0) {
+                        invaders.push(new Invader(this.x + 10, this.y + this.height + 10, 2));
+                        invaders.push(new Invader(this.x + this.width - 46, this.y + this.height + 10, 2));
+                    }
+                }
+            }
+
+            draw() {
+                if (!this.alive) return;
+
+                const x = this.x;
+                const y = this.y;
+                const w = this.width;
+                const h = this.height;
+
+                ctx.fillStyle = this.hitFlash > 0 ? '#ffffff' : (this.phase === 2 ? '#ff0055' : '#b026ff');
+
+                // Main Armor Body
+                ctx.fillRect(x + 20, y + 20, w - 40, h - 30);
+                ctx.fillRect(x + 50, y, w - 100, 20);
+                ctx.fillRect(x, y + 30, 20, 40);
+                ctx.fillRect(x + w - 20, y + 30, 20, 40);
+                ctx.fillRect(x + 10, y + 70, 15, 20);
+                ctx.fillRect(x + w / 2 - 10, y + 75, 20, 20);
+                ctx.fillRect(x + w - 25, y + 70, 15, 20);
+
+                // Glowing Alien Eyes
+                ctx.fillStyle = '#ffff00';
+                ctx.fillRect(x + 40, y + 30, 20, 14);
+                ctx.fillRect(x + w - 60, y + 30, 20, 14);
+
+                // Health Bar
+                ctx.fillStyle = '#222222';
+                ctx.fillRect(x, y - 22, w, 10);
+                ctx.fillStyle = this.hp > this.maxHp * 0.3 ? '#00ff66' : '#ff0055';
+                ctx.fillRect(x, y - 22, (this.hp / this.maxHp) * w, 10);
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x, y - 22, w, 10);
+            }
+        }
+
+        // Bullets
+        class Bullet {
+            constructor(x, y, speed, isPlayer = true) {
+                this.x = x;
+                this.y = y;
+                this.width = 4;
+                this.height = 12;
+                this.speed = speed;
+                this.isPlayer = isPlayer;
+                this.active = true;
+            }
+
+            update() {
+                this.y += this.speed;
+                if (this.y < -20 || this.y > GAME_HEIGHT + 20) {
+                    this.active = false;
+                }
+            }
+
+            draw() {
+                ctx.fillStyle = this.isPlayer ? '#00ff66' : '#ff0055';
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+            }
+        }
+
+        // Defensive Bunkers (Shields)
+        class Bunker {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.width = 60;
+                this.height = 40;
+                // 6x4 Grid of destructible blocks
+                this.rows = 5;
+                this.cols = 8;
+                this.blockWidth = this.width / this.cols;
+                this.blockHeight = this.height / this.rows;
+                this.grid = [];
+
+                for (let r = 0; r < this.rows; r++) {
+                    this.grid[r] = [];
+                    for (let c = 0; c < this.cols; c++) {
+                        // Create arch shape at bottom center
+                        if (r >= 3 && (c === 3 || c === 4)) {
+                            this.grid[r][c] = 0; // Empty
+                        } else {
+                            this.grid[r][c] = 3; // Health 3
+                        }
+                    }
+                }
+            }
+
+            draw() {
+                for (let r = 0; r < this.rows; r++) {
+                    for (let c = 0; c < this.cols; c++) {
+                        const health = this.grid[r][c];
+                        if (health > 0) {
+                            ctx.fillStyle = health === 3 ? '#00cc55' : health === 2 ? '#008833' : '#004411';
+                            ctx.fillRect(
+                                this.x + c * this.blockWidth,
+                                this.y + r * this.blockHeight,
+                                this.blockWidth - 1,
+                                this.blockHeight - 1
+                            );
+                        }
+                    }
+                }
+            }
+
+            checkHit(bullet) {
+                if (bullet.x + bullet.width < this.x || bullet.x > this.x + this.width ||
+                    bullet.y + bullet.height < this.y || bullet.y > this.y + this.height) {
+                    return false;
+                }
+
+                const c = Math.floor((bullet.x - this.x) / this.blockWidth);
+                const r = Math.floor((bullet.y - this.y) / this.blockHeight);
+
+                if (r >= 0 && r < this.rows && c >= 0 && c < this.cols) {
+                    if (this.grid[r][c] > 0) {
+                        this.grid[r][c]--;
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+
+        // Particle Explosions
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.vx = (Math.random() - 0.5) * 6;
+                this.vy = (Math.random() - 0.5) * 6;
+                this.size = Math.random() * 3 + 2;
+                this.color = color;
+                this.alpha = 1;
+                this.life = 0.04;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.alpha -= this.life;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, this.alpha);
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.size, this.size);
+                ctx.restore();
+            }
+        }
+
+        // Game Logic Variables
+        let player = new Player();
+        let invaders = [];
+        let boss = null;
+        let bunkers = [];
+        let playerBullets = [];
+        let invaderBullets = [];
+        let particles = [];
+
+        let invaderDirection = 1; // 1: Right, -1: Left
+        let invaderMoveTimer = 0;
+        let invaderMoveInterval = 40; // Frames between moves
+        let invaderStepSoundFreq = 200;
+
+        const keys = { left: false, right: false, shoot: false };
+
+        // Input Listeners
+        window.addEventListener('keydown', (e) => {
+            sfx.init();
+            if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = true;
+            if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = true;
+            if (e.key === ' ' || e.key === 'Spacebar') {
+                keys.shoot = true;
+                e.preventDefault();
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = false;
+            if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = false;
+            if (e.key === ' ' || e.key === 'Spacebar') keys.shoot = false;
+        });
+
+        // Touch Control Setup
+        const btnLeft = document.getElementById('btnLeft');
+        const btnRight = document.getElementById('btnRight');
+        const btnShoot = document.getElementById('btnShoot');
+
+        const bindTouch = (elem, action) => {
+            elem.addEventListener('touchstart', (e) => {
+                sfx.init();
+                e.preventDefault();
+                keys[action] = true;
+            });
+            elem.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                keys[action] = false;
+            });
+            elem.addEventListener('mousedown', () => { sfx.init(); keys[action] = true; });
+            elem.addEventListener('mouseup', () => keys[action] = false);
+        };
+
+        bindTouch(btnLeft, 'left');
+        bindTouch(btnRight, 'right');
+        bindTouch(btnShoot, 'shoot');
+
+        function initGame() {
+            score = 0;
+            currentStage = 1;
+            lives = 3;
+            updateHUD();
+
+            player = new Player();
+            playerBullets = [];
+            invaderBullets = [];
+            particles = [];
+
+            setupInvaders();
+            setupBunkers();
+
+            currentState = STATE.PLAYING;
+            overlay.classList.add('hidden');
+        }
+
+        function setupInvaders() {
+            invaders = [];
+            boss = null;
+
+            if (currentStage === 3) {
+                // Stage 3: BOSS BATTLE
+                boss = new Boss();
+                bannerText = "WARNING: BOSS APPROACHING!";
+                bannerTimer = 150;
+                return;
+            }
+
+            bannerText = "STAGE " + currentStage;
+            bannerTimer = 100;
+
+            const rows = 5;
+            const cols = 10;
+            const startX = 80;
+            const startY = 80;
+            const spacingX = 54;
+            const spacingY = 38;
+
+            if (currentStage === 1) {
+                // Classic Matrix Formation
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        invaders.push(new Invader(startX + c * spacingX, startY + r * spacingY, r));
+                    }
+                }
+            } else if (currentStage === 2) {
+                // V-Shape Formation
+                for (let c = 0; c < cols; c++) {
+                    const distFromCenter = Math.abs(c - (cols - 1) / 2);
+                    for (let r = 0; r < 3; r++) {
+                        const yPos = startY + (r + distFromCenter * 0.7) * spacingY;
+                        invaders.push(new Invader(startX + c * spacingX, yPos, r));
+                    }
+                }
+            } else {
+                // Advanced Stages (4+)
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        invaders.push(new Invader(startX + c * spacingX, startY + r * spacingY, (r + currentStage) % 5));
+                    }
+                }
+            }
+
+            invaderDirection = 1;
+            invaderMoveInterval = Math.max(12, 40 - (currentStage - 1) * 8);
+            invaderMoveTimer = 0;
+        }
+
+        function setupBunkers() {
+            bunkers = [];
+            const count = 4;
+            const spacing = GAME_WIDTH / (count + 1);
+            for (let i = 0; i < count; i++) {
+                bunkers.push(new Bunker(spacing * (i + 1) - 30, GAME_HEIGHT - 120));
+            }
+        }
+
+        function spawnParticles(x, y, color, count = 12) {
+            for (let i = 0; i < count; i++) {
+                particles.push(new Particle(x, y, color));
+            }
+        }
+
+        function updateHUD() {
+            scoreEl.textContent = String(score).padStart(5, '0');
+            stageEl.textContent = "STAGE " + currentStage;
+            livesEl.textContent = '❤️'.repeat(Math.max(0, lives));
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem('invader_highscore', highScore);
+                highScoreEl.textContent = String(highScore).padStart(5, '0');
+            }
+        }
+
+        let lastShootTime = 0;
+
+        function update() {
+            if (currentState !== STATE.PLAYING) return;
+
+            if (bannerTimer > 0) bannerTimer--;
+
+            // Player Movement
+            if (keys.left) player.move(-1);
+            if (keys.right) player.move(1);
+
+            // Player Shooting
+            const now = Date.now();
+            if (keys.shoot && now - lastShootTime > 350) {
+                playerBullets.push(new Bullet(player.x + player.width / 2 - 2, player.y, -10, true));
+                sfx.playShoot();
+                lastShootTime = now;
+            }
+
+            // Update Bullets
+            playerBullets.forEach(b => b.update());
+            invaderBullets.forEach(b => b.update());
+
+            playerBullets = playerBullets.filter(b => b.active);
+            invaderBullets = invaderBullets.filter(b => b.active);
+
+            // Update Particles
+            particles.forEach(p => p.update());
+            particles = particles.filter(p => p.alpha > 0);
+
+            // Boss Logic Update
+            if (boss && boss.alive) {
+                boss.update();
+
+                // Bullet vs Boss collision
+                playerBullets.forEach(bullet => {
+                    if (bullet.active &&
+                        bullet.x < boss.x + boss.width &&
+                        bullet.x + bullet.width > boss.x &&
+                        bullet.y < boss.y + boss.height &&
+                        bullet.y + bullet.height > boss.y) {
+
+                        bullet.active = false;
+                        boss.hp -= 2;
+                        boss.hitFlash = 4;
+                        sfx.playBossHit();
+                        spawnParticles(bullet.x, bullet.y, '#ff0055', 6);
+
+                        if (boss.hp <= 0) {
+                            boss.alive = false;
+                            score += 2000;
+                            updateHUD();
+                            sfx.playExplosion();
+                            spawnParticles(boss.x + boss.width / 2, boss.y + boss.height / 2, '#ff00ff', 60);
+                        }
+                    }
+                });
+            }
+
+            // Check Stage Clear condition
+            const aliveInvaders = invaders.filter(i => i.alive);
+
+            if (aliveInvaders.length === 0 && (!boss || !boss.alive)) {
+                // Advance to Next Stage!
+                currentStage++;
+                score += 1000 * (currentStage - 1);
+                updateHUD();
+
+                setupInvaders();
+                setupBunkers();
+                playerBullets = [];
+                invaderBullets = [];
+                return;
+            }
+
+            // Invader Movement Logic
+            if (aliveInvaders.length > 0) {
+                invaderMoveTimer++;
+                const ratio = aliveInvaders.length / 50;
+                invaderMoveInterval = Math.max(4, Math.floor(ratio * 35));
+
+                if (invaderMoveTimer >= invaderMoveInterval) {
+                    invaderMoveTimer = 0;
+
+                    let shouldShiftDown = false;
+                    aliveInvaders.forEach(invader => {
+                        if (invaderDirection === 1 && invader.x + invader.width >= GAME_WIDTH - 20) {
+                            shouldShiftDown = true;
+                        } else if (invaderDirection === -1 && invader.x <= 20) {
+                            shouldShiftDown = true;
+                        }
+                    });
+
+                    if (shouldShiftDown) {
+                        invaderDirection *= -1;
+                        aliveInvaders.forEach(invader => {
+                            invader.y += 18;
+                            invader.animFrame = 1 - invader.animFrame;
+                            if (invader.y + invader.height >= player.y) {
+                                gameOver();
+                            }
+                        });
+                    } else {
+                        aliveInvaders.forEach(invader => {
+                            invader.x += invaderDirection * 12;
+                            invader.animFrame = 1 - invader.animFrame;
+                        });
+                    }
+
+                    invaderStepSoundFreq = invaderStepSoundFreq === 200 ? 160 : 200;
+                    sfx.playInvaderStep(invaderStepSoundFreq);
+                }
+
+                // Random Invader Shooting
+                if (Math.random() < 0.03) {
+                    const shooter = aliveInvaders[Math.floor(Math.random() * aliveInvaders.length)];
+                    invaderBullets.push(new Bullet(shooter.x + shooter.width / 2, shooter.y + shooter.height, 5, false));
+                }
+            }
+
+            // Bullet vs Invader Collisions
+            playerBullets.forEach(bullet => {
+                aliveInvaders.forEach(invader => {
+                    if (bullet.active && invader.alive &&
+                        bullet.x < invader.x + invader.width &&
+                        bullet.x + bullet.width > invader.x &&
+                        bullet.y < invader.y + invader.height &&
+                        bullet.y + bullet.height > invader.y) {
+
+                        bullet.active = false;
+                        invader.alive = false;
+                        score += invader.points;
+                        updateHUD();
+                        sfx.playExplosion();
+                        spawnParticles(invader.x + invader.width / 2, invader.y + invader.height / 2, invader.color);
+                    }
+                });
+            });
+
+            // Bullet vs Bunker Collisions
+            [...playerBullets, ...invaderBullets].forEach(bullet => {
+                if (!bullet.active) return;
+                bunkers.forEach(bunker => {
+                    if (bunker.checkHit(bullet)) {
+                        bullet.active = false;
+                        spawnParticles(bullet.x, bullet.y, '#00ff66', 4);
+                    }
+                });
+            });
+
+            // Enemy Bullet vs Player Collisions
+            invaderBullets.forEach(bullet => {
+                if (bullet.active &&
+                    bullet.x < player.x + player.width &&
+                    bullet.x + bullet.width > player.x &&
+                    bullet.y < player.y + player.height &&
+                    bullet.y + bullet.height > player.y) {
+
+                    bullet.active = false;
+                    lives--;
+                    sfx.playExplosion();
+                    spawnParticles(player.x + player.width / 2, player.y + player.height / 2, '#ff0000', 20);
+                    updateHUD();
+
+                    if (lives <= 0) {
+                        gameOver();
+                    }
+                }
+            });
+        }
+
+        function gameOver() {
+            currentState = STATE.GAMEOVER;
+            showOverlay('GAME OVER', 'EARTH WAS INVADED AT STAGE ' + currentStage + '!', 'TRY AGAIN');
+        }
+
+        function showOverlay(title, sub, btnText) {
+            overlayTitle.innerHTML = title;
+            overlayTitle.className = title.includes('OVER') ? 'text-2xl md:text-4xl text-red-500 neon-text-pink leading-relaxed' : 'text-2xl md:text-4xl text-green-400 neon-text-green leading-relaxed';
+            overlaySub.textContent = sub;
+            startBtn.textContent = btnText;
+            overlay.classList.remove('hidden');
+        }
+
+        function render() {
+            // Clear Screen
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+            // Draw Background Stars Effect
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            for (let i = 0; i < 30; i++) {
+                const sx = (i * 137) % GAME_WIDTH;
+                const sy = (i * 269) % GAME_HEIGHT;
+                ctx.fillRect(sx, sy, 2, 2);
+            }
+
+            if (currentState === STATE.PLAYING || currentState === STATE.GAMEOVER || currentState === STATE.VICTORY) {
+                // Draw Game Entities
+                player.draw();
+                if (boss) boss.draw();
+                invaders.forEach(invader => invader.draw());
+                bunkers.forEach(bunker => bunker.draw());
+                playerBullets.forEach(bullet => bullet.draw());
+                invaderBullets.forEach(bullet => bullet.draw());
+                particles.forEach(particle => particle.draw());
+
+                // Draw Stage / Boss Banner
+                if (bannerTimer > 0) {
+                    ctx.save();
+                    ctx.font = '20px "Press Start 2P"';
+                    ctx.textAlign = 'center';
+                    ctx.fillStyle = bannerText.includes('WARNING') ? '#ff0055' : '#00f0ff';
+                    ctx.shadowColor = ctx.fillStyle;
+                    ctx.shadowBlur = 10;
+                    ctx.fillText(bannerText, GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20);
+                    ctx.restore();
+                }
+            }
+
+            // Retro Scanlines Effect
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+            for (let y = 0; y < GAME_HEIGHT; y += 4) {
+                ctx.fillRect(0, y, GAME_WIDTH, 2);
+            }
+        }
+
+        // Main Loop
+        function gameLoop() {
+            update();
+            render();
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // Start Button Click
+        startBtn.addEventListener('click', () => {
+            sfx.init();
+            initGame();
+        });
+
+        // Initialize Loop
+        window.onload = () => {
+            gameLoop();
+        };
+    </script>
+</body>
+</html>
